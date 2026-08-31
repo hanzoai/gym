@@ -1,0 +1,55 @@
+[package]
+name = "hanzo-gym"
+version = "0.1.0"
+edition = "2021"
+rust-version = "1.85"
+license = "Apache-2.0"
+description = "Hanzo Gym — LoRA fine-tuning and GRPO for language models, in Rust on hanzo-ml"
+repository = "https://github.com/hanzoai/gym"
+keywords = ["llm", "fine-tuning", "lora", "grpo", "training"]
+categories = ["science"]
+
+[lib]
+name = "gym"
+path = "src/lib.rs"
+
+[[bin]]
+name = "gym"
+path = "src/main.rs"
+
+[dependencies]
+hanzo-ml = "0.11.95"
+hanzo-nn = "0.11.39"
+tokenizers = { version = "0.21", default-features = false, features = ["onig"] }
+minijinja = { version = "2", features = ["builtins", "json", "loader"] }
+hf-hub = { version = "0.4", default-features = false, features = ["ureq", "rustls-tls"] }
+safetensors = "0.7"
+serde = { version = "1", features = ["derive"] }
+serde_json = "1"
+serde_yaml = "0.9"
+clap = { version = "4", features = ["derive"] }
+anyhow = "1"
+thiserror = "2"
+rand = "0.9"
+rand_distr = "0.5"
+regex = "1"
+indicatif = "0.18"
+tracing = "0.1"
+tracing-subscriber = { version = "0.3", features = ["env-filter"] }
+ureq = { version = "3", features = ["json"] }
+memmap2 = "0.9"
+half = "2"
+
+[features]
+default = []
+cuda = ["hanzo-ml/cuda", "hanzo-nn/cuda"]
+cudnn = ["cuda", "hanzo-ml/cudnn"]
+metal = ["hanzo-ml/metal", "hanzo-nn/metal"]
+accelerate = ["hanzo-ml/accelerate", "hanzo-nn/accelerate"]
+mkl = ["hanzo-ml/mkl", "hanzo-nn/mkl"]
+
+[profile.release]
+lto = "thin"
+codegen-units = 1
+
+[workspace]
