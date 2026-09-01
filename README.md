@@ -7,8 +7,8 @@ where the feature exists and fails at load where it does not.
 
 ```bash
 cargo install hanzo-gym --features metal   # or --features cuda
-gym train qwen3-lora.yml
-gym merge qwen3-lora.yml
+gym train examples/qwen3-lora.yml   # Qwen3-0.6B, LoRA on q/v, 20 steps
+gym merge examples/qwen3-lora.yml
 ```
 
 ```yaml

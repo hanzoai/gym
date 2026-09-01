@@ -1,0 +1,20 @@
+base_model: Qwen/Qwen3-0.6B
+chat_template: qwen3
+datasets:
+  - path: examples/add.jsonl
+    type: chat_template
+val_set_size: 4
+output_dir: outputs/qwen3-lora
+sequence_len: 64
+adapter: lora
+lora_r: 8
+lora_alpha: 16
+lora_target_modules: [q_proj, v_proj]
+micro_batch_size: 4
+gradient_accumulation_steps: 1
+num_epochs: 1
+max_steps: 20
+learning_rate: 1.0e-4
+lr_scheduler: constant
+logging_steps: 1
+bf16: false
