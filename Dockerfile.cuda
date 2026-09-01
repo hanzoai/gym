@@ -6,7 +6,8 @@
 #
 # CUDA_COMPUTE_CAP is the GPU generation hanzo-ml's kernels are compiled for:
 #   90 = H100 / H200 (default)   80 = A100   89 = L40S / RTX 4090
-FROM nvidia/cuda:12.6.3-devel-ubuntu24.04 AS builder
+ARG CUDA_VERSION=12.6.3
+FROM nvidia/cuda:${CUDA_VERSION}-devel-ubuntu24.04 AS builder
 ARG DEBIAN_FRONTEND=noninteractive
 RUN apt-get update \
     && apt-get install -y --no-install-recommends ca-certificates curl build-essential \
@@ -26,7 +27,7 @@ ENV CUDA_COMPUTE_CAP=${CUDA_COMPUTE_CAP} \
     CARGO_NET_RETRY=5
 RUN cargo build --release --locked --features cuda
 
-FROM nvidia/cuda:12.6.3-runtime-ubuntu24.04
+FROM nvidia/cuda:${CUDA_VERSION}-runtime-ubuntu24.04
 ARG DEBIAN_FRONTEND=noninteractive
 RUN apt-get update \
     && apt-get install -y --no-install-recommends ca-certificates \
