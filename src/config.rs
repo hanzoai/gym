@@ -198,7 +198,10 @@ impl Config {
     }
 
     pub fn validate(&self) -> anyhow::Result<()> {
-        anyhow::ensure!(!self.datasets.is_empty(), "at least one dataset is required");
+        anyhow::ensure!(
+            !self.datasets.is_empty(),
+            "at least one dataset is required"
+        );
         anyhow::ensure!(self.sequence_len > 1, "sequence_len must be > 1");
         anyhow::ensure!(self.micro_batch_size >= 1, "micro_batch_size must be >= 1");
         if self.adapter == Adapter::Lora {
@@ -209,8 +212,14 @@ impl Config {
             );
         }
         if self.rl == Some(Rl::Grpo) {
-            anyhow::ensure!(self.trl.num_generations >= 2, "trl.num_generations must be >= 2");
-            anyhow::ensure!(!self.trl.reward_funcs.is_empty(), "grpo needs trl.reward_funcs");
+            anyhow::ensure!(
+                self.trl.num_generations >= 2,
+                "trl.num_generations must be >= 2"
+            );
+            anyhow::ensure!(
+                !self.trl.reward_funcs.is_empty(),
+                "grpo needs trl.reward_funcs"
+            );
             if !self.trl.reward_weights.is_empty() {
                 anyhow::ensure!(
                     self.trl.reward_weights.len() == self.trl.reward_funcs.len(),
@@ -230,10 +239,18 @@ impl Config {
     /// projection in attention and MLP.
     pub fn lora_targets(&self) -> Vec<String> {
         if self.lora_target_linear {
-            ["q_proj", "k_proj", "v_proj", "o_proj", "gate_proj", "up_proj", "down_proj"]
-                .iter()
-                .map(|s| s.to_string())
-                .collect()
+            [
+                "q_proj",
+                "k_proj",
+                "v_proj",
+                "o_proj",
+                "gate_proj",
+                "up_proj",
+                "down_proj",
+            ]
+            .iter()
+            .map(|s| s.to_string())
+            .collect()
         } else {
             self.lora_target_modules.clone()
         }
@@ -249,26 +266,66 @@ impl Config {
     }
 }
 
-fn d_seq_len() -> usize { 2048 }
-fn d_lora_r() -> usize { 8 }
-fn d_lora_alpha() -> f64 { 16.0 }
-fn d_one() -> usize { 1 }
-fn d_one_f() -> f64 { 1.0 }
-fn d_ten() -> usize { 10 }
-fn d_lr() -> f64 { 2e-4 }
-fn d_grad_norm() -> f64 { 1.0 }
-fn d_seed() -> u64 { 42 }
-fn d_true() -> bool { true }
-fn d_gens() -> usize { 4 }
-fn d_completion() -> usize { 256 }
-fn d_messages() -> String { "messages".into() }
-fn d_roles() -> Vec<String> { vec!["assistant".into()] }
-fn d_instruction() -> String { "instruction".into() }
-fn d_input() -> String { "input".into() }
-fn d_output() -> String { "output".into() }
-fn d_text() -> String { "text".into() }
-fn d_role() -> String { "role".into() }
-fn d_content() -> String { "content".into() }
+fn d_seq_len() -> usize {
+    2048
+}
+fn d_lora_r() -> usize {
+    8
+}
+fn d_lora_alpha() -> f64 {
+    16.0
+}
+fn d_one() -> usize {
+    1
+}
+fn d_one_f() -> f64 {
+    1.0
+}
+fn d_ten() -> usize {
+    10
+}
+fn d_lr() -> f64 {
+    2e-4
+}
+fn d_grad_norm() -> f64 {
+    1.0
+}
+fn d_seed() -> u64 {
+    42
+}
+fn d_true() -> bool {
+    true
+}
+fn d_gens() -> usize {
+    4
+}
+fn d_completion() -> usize {
+    256
+}
+fn d_messages() -> String {
+    "messages".into()
+}
+fn d_roles() -> Vec<String> {
+    vec!["assistant".into()]
+}
+fn d_instruction() -> String {
+    "instruction".into()
+}
+fn d_input() -> String {
+    "input".into()
+}
+fn d_output() -> String {
+    "output".into()
+}
+fn d_text() -> String {
+    "text".into()
+}
+fn d_role() -> String {
+    "role".into()
+}
+fn d_content() -> String {
+    "content".into()
+}
 
 #[cfg(test)]
 mod tests {
@@ -306,7 +363,14 @@ warmup_ratio: 0.03
         assert_eq!(c.lora_scale(), 2.0);
         assert_eq!(c.lora_targets().len(), 6);
         assert_eq!(c.warmup(100), 3);
-        assert_eq!(c.datasets[0].message_property_mappings.as_ref().unwrap().role, "from");
+        assert_eq!(
+            c.datasets[0]
+                .message_property_mappings
+                .as_ref()
+                .unwrap()
+                .role,
+            "from"
+        );
     }
 
     #[test]

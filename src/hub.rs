@@ -21,7 +21,11 @@ pub fn snapshot(id_or_path: &str) -> Result<Snapshot> {
         return local(p);
     }
     let api = Api::new()?;
-    let repo = api.repo(Repo::with_revision(id_or_path.to_string(), RepoType::Model, "main".into()));
+    let repo = api.repo(Repo::with_revision(
+        id_or_path.to_string(),
+        RepoType::Model,
+        "main".into(),
+    ));
     let config = repo.get("config.json").context("config.json")?;
     let tokenizer = repo.get("tokenizer.json").context("tokenizer.json")?;
     let tokenizer_config = repo.get("tokenizer_config.json").ok();
@@ -29,7 +33,12 @@ pub fn snapshot(id_or_path: &str) -> Result<Snapshot> {
         Ok(index) => shards(&repo, &index)?,
         Err(_) => vec![repo.get("model.safetensors").context("model.safetensors")?],
     };
-    Ok(Snapshot { config, tokenizer, tokenizer_config, weights })
+    Ok(Snapshot {
+        config,
+        tokenizer,
+        tokenizer_config,
+        weights,
+    })
 }
 
 fn shards(repo: &ApiRepo, index: &Path) -> Result<Vec<PathBuf>> {

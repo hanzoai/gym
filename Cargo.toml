@@ -39,6 +39,8 @@ tracing-subscriber = { version = "0.3", features = ["env-filter"] }
 ureq = { version = "3", features = ["json"] }
 memmap2 = "0.9"
 half = "2"
+parquet = { version = "58", default-features = false, features = ["json", "snap", "zstd", "lz4", "flate2-zlib-rs", "brotli"] }
+minijinja-contrib = { version = "2", features = ["pycompat"] }
 
 [features]
 default = []
@@ -53,3 +55,6 @@ lto = "thin"
 codegen-units = 1
 
 [workspace]
+
+[dev-dependencies]
+hanzo-transformers = "0.11.9"
