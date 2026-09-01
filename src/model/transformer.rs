@@ -2,6 +2,7 @@
 //! differentiate: `rms_norm_slow`, `rope_slow`, `softmax`, `silu`, matmul.
 
 use crate::model::lora::{linear, Linear, LoraLinear, Proj};
+use crate::Cache;
 use hanzo_ml::{DType, Device, Result, Tensor, Var, D};
 use hanzo_nn::ops::{rms_norm_slow, silu, softmax};
 use hanzo_nn::rotary_emb::rope_slow;
@@ -90,6 +91,16 @@ const PROJS: [&str; 7] = [
     "mlp.down_proj",
 ];
 
+/// What one pass over a sequence holds fixed for every layer.
+struct Pass<'a> {
+    arch: &'a Arch,
+    cos: Tensor,
+    sin: Tensor,
+    mask: Tensor,
+    /// Applies LoRA dropout.
+    train: bool,
+}
+
 struct Layer {
     ln1: Tensor,
     ln2: Tensor,
@@ -176,18 +187,18 @@ impl Layer {
         })
     }
 
+    /// `kv` is this layer's cache slot: when given, attention runs over the
+    /// cached keys and values followed by the new ones, and the concatenation
+    /// is stored back.
     fn forward(
         &self,
         x: &Tensor,
-        a: &Arch,
-        cos: &Tensor,
-        sin: &Tensor,
-        mask: &Tensor,
-        train: bool,
+        p: &Pass,
+        kv: Option<&mut Option<(Tensor, Tensor)>>,
     ) -> Result<Tensor> {
-        let eps = a.eps as f32;
+        let (eps, train) = (p.arch.eps as f32, p.train);
         let h = rms_norm_slow(x, &self.ln1, eps)?;
-        let x = (x + self.attn(&h, a, cos, sin, mask, train)?)?;
+        let x = (x + self.attn(&h, p, kv)?)?;
         let h = rms_norm_slow(&x, &self.ln2, eps)?;
         let [_, _, _, _, gate, up, down] = &self.projs;
         let h = (silu(&gate.forward(&h, train)?)? * up.forward(&h, train)?)?;
@@ -197,26 +208,32 @@ impl Layer {
     fn attn(
         &self,
         x: &Tensor,
-        a: &Arch,
-        cos: &Tensor,
-        sin: &Tensor,
-        mask: &Tensor,
-        train: bool,
+        p: &Pass,
+        kv: Option<&mut Option<(Tensor, Tensor)>>,
     ) -> Result<Tensor> {
+        let (a, cos, sin, mask, train) = (p.arch, &p.cos, &p.sin, &p.mask, p.train);
         let (b, t, _) = x.dims3()?;
-        let (h, kv, d) = (a.heads, a.kv_heads, a.head_dim);
+        let (h, kv_heads, d) = (a.heads, a.kv_heads, a.head_dim);
         let [q, k, v, o, ..] = &self.projs;
         let split = |x: Tensor, n: usize| x.reshape((b, t, n, d))?.transpose(1, 2);
         let mut q = split(q.forward(x, train)?, h)?;
-        let mut k = split(k.forward(x, train)?, kv)?;
-        let v = split(v.forward(x, train)?, kv)?;
+        let mut k = split(k.forward(x, train)?, kv_heads)?;
+        let mut v = split(v.forward(x, train)?, kv_heads)?;
         if let Some((qn, kn)) = &self.qk_norm {
             q = rms_norm_slow(&q, qn, a.eps as f32)?;
             k = rms_norm_slow(&k, kn, a.eps as f32)?;
         }
         let q = rope_slow(&q, cos, sin)?.to_dtype(DType::F32)?;
-        let k = repeat(&rope_slow(&k, cos, sin)?, h / kv)?.to_dtype(DType::F32)?;
-        let v = repeat(&v, h / kv)?.to_dtype(DType::F32)?;
+        k = rope_slow(&k, cos, sin)?;
+        if let Some(slot) = kv {
+            if let Some((pk, pv)) = slot {
+                k = Tensor::cat(&[&*pk, &k], 2)?;
+                v = Tensor::cat(&[&*pv, &v], 2)?;
+            }
+            *slot = Some((k.clone(), v.clone()));
+        }
+        let k = repeat(&k, h / kv_heads)?.to_dtype(DType::F32)?;
+        let v = repeat(&v, h / kv_heads)?.to_dtype(DType::F32)?;
         let scores = (q.matmul(&k.transpose(2, 3)?.contiguous()?)? / (d as f64).sqrt())?;
         let p = softmax(&scores.broadcast_add(mask)?, D::Minus1)?;
         let ctx = p.matmul(&v.contiguous()?)?.to_dtype(x.dtype())?;
@@ -276,23 +293,34 @@ impl Transformer {
     /// Logits `[b, t, vocab]` over the full sequence. `attention_mask` is
     /// `[b, t]` u8 with 1 at real tokens.
     pub fn forward(&self, ids: &Tensor, attention_mask: Option<&Tensor>) -> Result<Tensor> {
+        let t = ids.dim(1)?;
+        let mask = self.mask(t, attention_mask)?;
+        self.run(ids, self.pass(0, t, mask, self.train)?, None)
+    }
+
+    /// Logits for the new positions `ids` (`[b, t_new]`) continuing `cache`,
+    /// which then covers `cache.len + t_new` positions. Every row of the batch
+    /// must be the same length: there is no padding mask on this path.
+    pub fn forward_cached(&self, ids: &Tensor, cache: &mut Cache) -> Result<Tensor> {
+        let t = ids.dim(1)?;
+        cache.layers.resize_with(self.layers.len(), || None);
+        let mask = self.causal(t, cache.len)?;
+        let logits = self.run(ids, self.pass(cache.len, t, mask, false)?, Some(cache))?;
+        cache.len += t;
+        Ok(logits)
+    }
+
+    /// The decoder over `ids` (`[b, t]`) through `p`, one cache slot per layer.
+    fn run(&self, ids: &Tensor, p: Pass, mut cache: Option<&mut Cache>) -> Result<Tensor> {
         let (b, t) = ids.dims2()?;
         let a = &self.arch;
         let mut x = self
             .embed
             .index_select(&ids.flatten_all()?, 0)?
             .reshape((b, t, a.hidden))?;
-        let pos = Tensor::arange(0u32, t as u32, &self.device)?
-            .to_dtype(DType::F32)?
-            .reshape((t, 1))?;
-        let freqs = pos.matmul(&self.inv_freq)?;
-        let (cos, sin) = (
-            freqs.cos()?.to_dtype(self.dtype)?,
-            freqs.sin()?.to_dtype(self.dtype)?,
-        );
-        let mask = self.mask(t, attention_mask)?;
-        for l in &self.layers {
-            x = l.forward(&x, a, &cos, &sin, &mask, self.train)?;
+        for (i, l) in self.layers.iter().enumerate() {
+            let kv = cache.as_deref_mut().map(|c| &mut c.layers[i]);
+            x = l.forward(&x, &p, kv)?;
         }
         linear(
             &rms_norm_slow(&x, &self.norm, a.eps as f32)?,
@@ -301,13 +329,43 @@ impl Transformer {
         )
     }
 
+    /// Rotary tables for positions `past .. past + t` with `mask`.
+    fn pass(&self, past: usize, t: usize, mask: Tensor, train: bool) -> Result<Pass<'_>> {
+        let pos = Tensor::arange(past as u32, (past + t) as u32, &self.device)?
+            .to_dtype(DType::F32)?
+            .reshape((t, 1))?;
+        let freqs = pos.matmul(&self.inv_freq)?;
+        Ok(Pass {
+            arch: &self.arch,
+            cos: freqs.cos()?.to_dtype(self.dtype)?,
+            sin: freqs.sin()?.to_dtype(self.dtype)?,
+            mask,
+            train,
+        })
+    }
+
+    /// Additive f32 mask `[1, 1, t, past + t]`: query `i` sees every one of the
+    /// `past` earlier keys and the new keys up to itself.
+    fn causal(&self, t: usize, past: usize) -> Result<Tensor> {
+        let n = past + t;
+        let m: Vec<f32> = (0..t)
+            .flat_map(|i| {
+                (0..n).map(move |j| {
+                    if j <= past + i {
+                        0.0
+                    } else {
+                        f32::NEG_INFINITY
+                    }
+                })
+            })
+            .collect();
+        Tensor::from_vec(m, (1, 1, t, n), &self.device)
+    }
+
     /// Additive f32 mask: causal `[1, 1, t, t]`, or `[b, 1, t, t]` with `-inf`
     /// on padded keys.
     fn mask(&self, t: usize, attention_mask: Option<&Tensor>) -> Result<Tensor> {
-        let causal: Vec<f32> = (0..t)
-            .flat_map(|i| (0..t).map(move |j| if j <= i { 0.0 } else { f32::NEG_INFINITY }))
-            .collect();
-        let causal = Tensor::from_vec(causal, (1, 1, t, t), &self.device)?;
+        let causal = self.causal(t, 0)?;
         let Some(m) = attention_mask else {
             return Ok(causal);
         };

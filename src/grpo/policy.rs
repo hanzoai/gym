@@ -1,7 +1,7 @@
 //! What GRPO needs from a model: rollout, differentiable scoring, decoding.
 
 use crate::grpo::sampler::Sampler;
-use crate::CausalLm;
+use crate::{Cache, CausalLm};
 use hanzo_ml::{DType, Tensor, Var, D};
 use hanzo_nn::ops::log_softmax;
 use tokenizers::Tokenizer;
@@ -43,9 +43,10 @@ pub trait Policy {
 
 /// A [`CausalLm`] as a GRPO policy.
 ///
-/// Rollout has no KV cache: every generated token re-runs `model.forward` over
-/// the whole group's growing sequences, so sampling `n` tokens costs `n`
-/// forwards of lengths `p+1 ..= p+n`, quadratic in `n`.
+/// Rollout runs through the model's KV cache: the prompt is prefilled once for
+/// the whole group, then each generated token is one `forward_cached` over the
+/// batch. Rows that hit eos keep receiving the pad token so the batch stays
+/// rectangular; their later outputs are discarded.
 pub struct LmPolicy<'a> {
     pub model: &'a dyn CausalLm,
     pub tokenizer: &'a Tokenizer,
@@ -64,40 +65,37 @@ impl Policy for LmPolicy<'_> {
         max_len: usize,
         sampler: &mut Sampler,
     ) -> anyhow::Result<Vec<Vec<u32>>> {
+        anyhow::ensure!(
+            !prompt.is_empty(),
+            "grpo: a prompt needs at least one token"
+        );
         let dev = self.model.device();
-        let mut live = vec![prompt.to_vec(); group_size];
-        let mut done = Vec::with_capacity(group_size);
+        let pad = self.eos.unwrap_or(0);
+        let mut cache = Cache::default();
+        let mut ids = Tensor::from_vec(prompt.repeat(group_size), (group_size, prompt.len()), dev)?;
+        let mut out = vec![Vec::new(); group_size];
+        let mut live = vec![true; group_size];
         for _ in 0..max_len {
-            if live.is_empty() {
+            let logits = self.model.forward_cached(&ids, &mut cache)?;
+            let last = logits.narrow(1, logits.dim(1)? - 1, 1)?.squeeze(1)?;
+            let mut next = Vec::with_capacity(group_size);
+            for i in 0..group_size {
+                let tok = if live[i] {
+                    let tok = sampler.sample(&last.get(i)?)?;
+                    out[i].push(tok);
+                    live[i] &= Some(tok) != self.eos;
+                    tok
+                } else {
+                    pad
+                };
+                next.push(tok);
+            }
+            if !live.contains(&true) {
                 break;
             }
-            let t = live[0].len();
-            let ids = Tensor::from_vec(live.concat(), (live.len(), t), dev)?;
-            let last = self
-                .model
-                .forward(&ids, None)?
-                .narrow(1, t - 1, 1)?
-                .squeeze(1)?;
-            let mut next = Vec::with_capacity(live.len());
-            for i in 0..live.len() {
-                next.push(sampler.sample(&last.get(i)?)?);
-            }
-            let mut still = Vec::with_capacity(live.len());
-            for (mut seq, tok) in live.into_iter().zip(next) {
-                seq.push(tok);
-                if Some(tok) == self.eos {
-                    done.push(seq)
-                } else {
-                    still.push(seq)
-                }
-            }
-            live = still;
+            ids = Tensor::from_vec(next, (group_size, 1), dev)?;
         }
-        done.extend(live);
-        Ok(done
-            .into_iter()
-            .map(|s| s[prompt.len()..].to_vec())
-            .collect())
+        Ok(out)
     }
 
     fn sequence_logprob(&self, prompt: &[u32], completion: &[u32]) -> anyhow::Result<Tensor> {
@@ -203,6 +201,14 @@ pub(crate) mod fake {
                 .index_select(&input_ids.flatten_all()?, 0)?
                 .reshape((b, t, v))
         }
+        fn forward_cached(
+            &self,
+            input_ids: &Tensor,
+            cache: &mut Cache,
+        ) -> hanzo_ml::Result<Tensor> {
+            cache.len += input_ids.dim(1)?;
+            self.forward(input_ids, None)
+        }
         fn trainable_vars(&self) -> Vec<Var> {
             vec![self.table.clone()]
         }
@@ -250,6 +256,7 @@ mod tests {
     use super::fake::{tokenizer, Bigram};
     use super::*;
     use crate::grpo::config::{GrpoConfig, Sampling};
+    use hanzo_ml::Device;
 
     const BIG: f32 = 30.0;
 
@@ -350,6 +357,43 @@ mod tests {
         assert_eq!(group.len(), 3);
         assert!(group.iter().all(|c| c.len() == 5), "{group:?}");
         assert_eq!(policy.decode(&[1, 2])?, "b");
+        Ok(())
+    }
+
+    #[test]
+    fn cached_greedy_rollout_matches_full_forward() -> anyhow::Result<()> {
+        // 1 -> 4 -> 0 -> 3 -> 1 -> ..., eos (2) unreachable, so every row runs to max_len.
+        let rows = vec![
+            vec![0.0, 1.0, 0.0, 5.0, 2.0],
+            vec![0.0, 0.0, 0.0, 1.0, 4.0],
+            vec![0.0; 5],
+            vec![0.0, 3.0, 0.0, 0.0, 1.0],
+            vec![6.0, 0.0, 0.0, 1.0, 0.0],
+        ];
+        let model = Bigram::new(&rows, Some(2));
+        let tk = tokenizer(&["a", "b", "<eos>", "c", "d"]);
+        let policy = LmPolicy {
+            model: &model,
+            tokenizer: &tk,
+            eos: Some(2),
+        };
+        let cfg = GrpoConfig {
+            sampling: Sampling::Greedy,
+            ..GrpoConfig::default()
+        };
+        let mut sampler = Sampler::new(&cfg, 0);
+        let (prompt, max_len) = ([0u32, 1], 7);
+        let group = policy.sample_group(&prompt, 3, max_len, &mut sampler)?;
+
+        let mut seq = prompt.to_vec();
+        for _ in 0..max_len {
+            let ids = Tensor::from_slice(&seq, (1, seq.len()), &Device::Cpu)?;
+            let last = model.forward(&ids, None)?.get(0)?.get(seq.len() - 1)?;
+            seq.push(last.argmax(0)?.to_scalar::<u32>()?);
+        }
+        let want = seq[prompt.len()..].to_vec();
+        assert_eq!(want, vec![4, 0, 3, 1, 4, 0, 3]);
+        assert!(group.iter().all(|c| c == &want), "{group:?}");
         Ok(())
     }
 }

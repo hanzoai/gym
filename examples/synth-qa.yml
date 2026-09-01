@@ -1,0 +1,38 @@
+# gym synth examples/synth-qa.yml --preview 3
+model:
+  endpoint: https://api.hanzo.ai/v1
+  api_key_env: HANZO_API_KEY
+  name: zen5
+  temperature: 0.8
+  concurrency: 8
+rows: 20
+output: out/qa.jsonl
+columns:
+  - name: domain
+    sampler: category
+    values: [finance, health, travel]
+    weights: [0.5, 0.3, 0.2]
+  - name: topic
+    sampler: subcategory
+    parent: domain
+    values: { finance: [tax, loans], health: [sleep, diet], travel: [visas, flights] }
+  - name: question
+    llm: text
+    prompt: "Write one realistic user question about {{ topic }} in the {{ domain }} domain."
+    system: "You write terse, realistic questions."
+  - name: answer
+    llm: text
+    prompt: "Answer this question accurately:\n{{ question }}"
+  - name: quality
+    llm: judge
+    prompt: "Rate the answer to the question."
+    rubric: { 5: "correct and complete", 3: "partly correct", 1: "wrong" }
+    columns: [question, answer]
+validators:
+  - column: answer
+    kind: regex
+    pattern: "\\S"
+    on_fail: retry:2
+  - column: quality
+    kind: expression
+    expression: "quality >= 3"

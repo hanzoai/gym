@@ -176,6 +176,7 @@ fn evaluate(
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::Cache;
     use hanzo_ml::{DType, Device, Result, Tensor, Var};
 
     /// Embedding followed by one linear map: exactly a bigram model.
@@ -202,6 +203,10 @@ mod tests {
             let (b, t) = ids.dims2()?;
             let h = self.emb.index_select(&ids.flatten_all()?, 0)?;
             h.matmul(self.out.as_tensor())?.reshape((b, t, VOCAB))
+        }
+        fn forward_cached(&self, ids: &Tensor, cache: &mut Cache) -> Result<Tensor> {
+            cache.len += ids.dim(1)?;
+            self.forward(ids, None)
         }
         fn trainable_vars(&self) -> Vec<Var> {
             vec![self.emb.clone(), self.out.clone()]

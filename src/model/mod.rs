@@ -10,7 +10,7 @@ mod tests;
 pub mod transformer;
 
 use crate::config::{Adapter, Config};
-use crate::{hub, CausalLm};
+use crate::{hub, Cache, CausalLm};
 use anyhow::Context;
 use hanzo_ml::{DType, Device, Result, Tensor, Var};
 use hanzo_nn::VarBuilder;
@@ -129,6 +129,10 @@ pub fn merge(cfg: &Config, out: Option<&str>) -> anyhow::Result<()> {
 impl CausalLm for Transformer {
     fn forward(&self, input_ids: &Tensor, attention_mask: Option<&Tensor>) -> Result<Tensor> {
         Transformer::forward(self, input_ids, attention_mask)
+    }
+
+    fn forward_cached(&self, input_ids: &Tensor, cache: &mut Cache) -> Result<Tensor> {
+        Transformer::forward_cached(self, input_ids, cache)
     }
 
     fn trainable_vars(&self) -> Vec<Var> {

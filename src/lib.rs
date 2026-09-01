@@ -11,7 +11,9 @@ pub mod data;
 pub mod grpo;
 pub mod hub;
 pub mod model;
+pub mod synth;
 pub mod train;
+pub mod trainjob;
 
 pub use config::Config;
 
@@ -38,13 +40,25 @@ pub struct Batch {
     pub attention_mask: Option<Tensor>,
 }
 
+/// Per-layer keys and values from the positions already decoded. `len` is how
+/// many positions they cover; the next `forward_cached` call continues at it.
+#[derive(Debug, Default)]
+pub struct Cache {
+    pub layers: Vec<Option<(Tensor, Tensor)>>,
+    pub len: usize,
+}
+
 /// A decoder-only language model that can be trained.
 ///
 /// `forward` runs the full sequence with a causal mask and returns logits
 /// `[b, t, vocab]` in the model dtype; the graph must reach every tensor in
 /// `trainable_vars`, and only those. Frozen base weights are plain tensors.
+/// `forward_cached` runs only the new positions `[b, t_new]` against `cache`,
+/// appends to it, and returns their logits — the decode path for generation;
+/// no graph is needed there.
 pub trait CausalLm {
     fn forward(&self, input_ids: &Tensor, attention_mask: Option<&Tensor>) -> Result<Tensor>;
+    fn forward_cached(&self, input_ids: &Tensor, cache: &mut Cache) -> Result<Tensor>;
     fn trainable_vars(&self) -> Vec<Var>;
     fn device(&self) -> &Device;
     fn dtype(&self) -> DType;

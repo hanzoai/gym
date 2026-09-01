@@ -17,6 +17,15 @@ enum Cmd {
     Train { config: String },
     /// Tokenize the datasets and report token and example counts without training.
     Preprocess { config: String },
+    /// Generate a synthetic dataset from a design (columns, samplers, LLM prompts, validators).
+    Synth {
+        design: String,
+        /// Generate this many rows and print them instead of writing the dataset.
+        #[arg(long)]
+        preview: Option<usize>,
+    },
+    /// Train from the Kubeflow TrainJob environment (BASE_MODEL, METHOD, DATASET_DIR, …).
+    Trainjob,
     /// Merge a trained LoRA adapter into the base weights.
     Merge {
         config: String,
@@ -35,6 +44,8 @@ fn main() -> anyhow::Result<()> {
     match Cli::parse().cmd {
         Cmd::Train { config } => gym::train::run(&gym::Config::load(config)?),
         Cmd::Preprocess { config } => gym::data::preprocess(&gym::Config::load(config)?),
+        Cmd::Synth { design, preview } => gym::synth::run(&design, preview),
+        Cmd::Trainjob => gym::trainjob::run(),
         Cmd::Merge { config, out } => {
             gym::model::merge(&gym::Config::load(config)?, out.as_deref())
         }

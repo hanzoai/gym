@@ -160,8 +160,8 @@ pub fn clip(grads: &mut GradStore, vars: &[Var], max: f64) -> hanzo_ml::Result<f
             sq += g
                 .sqr()?
                 .sum_all()?
-                .to_dtype(DType::F64)?
-                .to_scalar::<f64>()?;
+                .to_dtype(DType::F32)?
+                .to_scalar::<f32>()? as f64;
         }
     }
     let norm = sq.sqrt();

@@ -1,4 +1,5 @@
 use super::*;
+use crate::Cache;
 use hanzo_ml::{DType, Device, Tensor};
 use hanzo_nn::{loss::cross_entropy, AdamW, Optimizer, ParamsAdamW, VarBuilder};
 use std::collections::HashMap;
@@ -272,6 +273,64 @@ fn padding_leaves_real_positions_unchanged() {
             "row {row} diff {}",
             max_diff(&alone, &real)
         );
+    }
+}
+
+/// `forward_cached` over `chunks` of `ids` (`[b, t]`), concatenated back to `[b, t, vocab]`.
+fn decode(m: &Transformer, ids: &Tensor, chunks: &[usize]) -> Tensor {
+    let mut cache = Cache::default();
+    let mut out = Vec::new();
+    let mut at = 0;
+    for &n in chunks {
+        out.push(
+            m.forward_cached(&ids.narrow(1, at, n).unwrap(), &mut cache)
+                .unwrap(),
+        );
+        at += n;
+    }
+    assert_eq!(cache.len, at);
+    Tensor::cat(&out, 1).unwrap()
+}
+
+#[test]
+fn cache_matches_full_forward() {
+    let dev = Device::Cpu;
+    let w = weights(&dev, true);
+    let m = model(&w, true, &ALL);
+    perturb(&m);
+    let ids = Tensor::from_vec(
+        (0..12).map(|i| (i * 11 + 5) % V as u32).collect(),
+        (1, 12),
+        &dev,
+    )
+    .unwrap();
+    let full = m.forward(&ids, None).unwrap();
+    let one_at_a_time = decode(&m, &ids, &[1; 12]);
+    let prefill = decode(&m, &ids, &[8, 1, 1, 1, 1]);
+    for (name, got) in [("one at a time", one_at_a_time), ("prefill 8", prefill)] {
+        assert_eq!(got.dims(), full.dims());
+        let d = max_diff(&got, &full);
+        assert!(d < 1e-4, "{name} diff {d}");
+    }
+}
+
+#[test]
+fn cache_batch_matches_rows() {
+    let dev = Device::Cpu;
+    let w = weights(&dev, true);
+    let m = model(&w, true, &ALL);
+    perturb(&m);
+    let ids = Tensor::from_vec(
+        (0..3 * 10).map(|i| (i * 13 + 2) % V as u32).collect(),
+        (3, 10),
+        &dev,
+    )
+    .unwrap();
+    let batch = decode(&m, &ids, &[6, 1, 1, 1, 1]);
+    for row in 0..3 {
+        let alone = decode(&m, &ids.narrow(0, row, 1).unwrap(), &[6, 1, 1, 1, 1]);
+        let d = max_diff(&batch.narrow(0, row, 1).unwrap(), &alone);
+        assert!(d < 1e-4, "row {row} diff {d}");
     }
 }
 

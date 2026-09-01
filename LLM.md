@@ -20,20 +20,40 @@ keeps it out of ~/work/hanzo's root workspace).
 - `src/train/` — SFT loop: chunked masked CE, schedules, accumulation,
   clipping, AdamW, checkpoints; `run` picks device/dtype and dispatches to GRPO.
 - `src/grpo/` — port of hanzo-ml's `hanzo-training/src/grpo` math with a real
-  `LmPolicy` over `CausalLm`, verifiers (`exact_match`, `numeric_match`,
+  `LmPolicy` over `CausalLm`: rollouts through `forward_cached` (prompt
+  prefilled once per group, one decode step per token), differentiable
+  scoring through `forward`; verifiers (`exact_match`, `numeric_match`,
   `format:<re>`, `length:<n>`, `http:<url>`).
+- `src/synth/` — `gym synth`: Data Designer-style dataset synthesis. Columns
+  are samplers, Jinja expressions or LLM calls (text, structured, judge) run
+  per row in dependency order against any OpenAI-compatible endpoint;
+  validators drop or regenerate; rows stream to jsonl/parquet.
+- `src/trainjob.rs` — `gym trainjob`: the Kubeflow TrainJob container entry.
+  Reads the env contract from hanzoai/ai `cluster/finetune.go` (BASE_MODEL,
+  METHOD, TASK, DATASET_DIR, …) into a `Config`; METHOD=lora only.
+  `Dockerfile.cuda` + `.hanzo/workflows/image.yml` build
+  `ghcr.io/hanzoai/gym:<tag>` on the forge runners.
 
 ## Facts that shaped it
 
 - hanzo-nn's fused `rms_norm`, `rope` and attention kernels have no backward;
   the model uses `rms_norm_slow`, `rope_slow`, `softmax_last_dim` and matmul.
-- No KV cache in GRPO sampling yet (forward re-run per token). No QLoRA, full
-  fine-tune, multi-GPU, DPO family, sample packing — rejected at config load.
+- `Cache`/`forward_cached` is the decode path; rows in a cached batch must
+  have equal length (no padding mask there).
+- Metal has no f64: reduce norms and scalars through f32 tensors, never
+  `to_dtype(F64)`. No QLoRA, full fine-tune, multi-GPU, DPO family, sample
+  packing — rejected at config load.
 - KL in GRPO is against the pre-update policy of the step (adapter cannot be
   disabled through `CausalLm`), not the frozen base.
-- Hosted `/v1/ai/finetune/jobs` (hanzoai/ai) runs a Python transformers+PEFT
-  image today; this binary is meant to take over `hanzo-ft-lora` once it
-  covers the presets.
+- Hosted `/v1/ai/finetune/jobs` (hanzoai/ai) submits a TrainJob against the
+  `hanzo-ft-{lora,qlora,full}` ClusterTrainingRuntimes in
+  `~/work/hanzo-ml/trainer/manifests/base/runtimes/hanzo_finetune.yaml`
+  (image `ghcr.io/hanzoai/finetune-runtime`, Python). Pointing `hanzo-ft-lora`
+  at `ghcr.io/hanzoai/gym:<tag>` with `CMD trainjob` is the switch, once the
+  forge has built the image (the repo needs a git.hanzo.ai mirror first).
+- Engine loads PEFT adapters at startup only (merged into weights);
+  `/v1/models/unload` + `/reload` re-reads the same adapter path; it serves
+  `logprobs`. Engine-served rollouts would be adapter-to-path + reload per step.
 
 ## Build / test
 

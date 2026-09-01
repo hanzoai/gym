@@ -1,0 +1,25 @@
+base_model: Qwen/Qwen3-0.6B
+chat_template: qwen3
+datasets:
+  - path: examples/mul.jsonl
+    type: chat_template
+output_dir: outputs/qwen3-grpo
+sequence_len: 64
+adapter: lora
+lora_r: 8
+lora_alpha: 16
+lora_target_modules: [q_proj, v_proj]
+rl: grpo
+trl:
+  num_generations: 4
+  max_completion_length: 48
+  reward_funcs: [numeric_match]
+  temperature: 1.0
+micro_batch_size: 2
+gradient_accumulation_steps: 1
+num_epochs: 1
+max_steps: 6
+learning_rate: 1.0e-4
+lr_scheduler: constant
+logging_steps: 1
+bf16: false

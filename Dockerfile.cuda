@@ -1,0 +1,36 @@
+# syntax=docker/dockerfile:1
+# ghcr.io/hanzoai/gym — the TrainJob container behind Hanzo's hosted
+# fine-tuning API. Built and pushed by .hanzo/workflows/image.yml on the forge
+# runners, never locally. The image runs `gym trainjob`, which reads the
+# broker's environment (see README, "Hosted / TrainJob").
+#
+# CUDA_COMPUTE_CAP is the GPU generation hanzo-ml's kernels are compiled for:
+#   90 = H100 / H200 (default)   80 = A100   89 = L40S / RTX 4090
+FROM nvidia/cuda:12.6.3-devel-ubuntu24.04 AS builder
+ARG DEBIAN_FRONTEND=noninteractive
+RUN apt-get update \
+    && apt-get install -y --no-install-recommends ca-certificates curl build-essential \
+    && rm -rf /var/lib/apt/lists/*
+RUN curl --proto '=https' --tlsv1.2 -sSf https://sh.rustup.rs \
+    | sh -s -- -y --profile minimal --default-toolchain stable
+ENV PATH=/root/.cargo/bin:$PATH
+
+WORKDIR /gym
+COPY Cargo.toml Cargo.lock ./
+COPY src ./src
+
+ARG CUDA_COMPUTE_CAP=90
+# build.rs reads the process environment, so the ARG must become an ENV.
+ENV CUDA_COMPUTE_CAP=${CUDA_COMPUTE_CAP} \
+    CARGO_INCREMENTAL=0 \
+    CARGO_NET_RETRY=5
+RUN cargo build --release --locked --features cuda
+
+FROM nvidia/cuda:12.6.3-runtime-ubuntu24.04
+ARG DEBIAN_FRONTEND=noninteractive
+RUN apt-get update \
+    && apt-get install -y --no-install-recommends ca-certificates \
+    && rm -rf /var/lib/apt/lists/*
+COPY --from=builder --chmod=755 /gym/target/release/gym /usr/local/bin/gym
+ENTRYPOINT ["gym"]
+CMD ["trainjob"]

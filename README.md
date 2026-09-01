@@ -47,4 +47,37 @@ verifiers, PEFT adapter save and merge.
 Not implemented: QLoRA, full fine-tuning, multi-GPU, DPO/KTO/ORPO, sample
 packing. A config that asks for one of these is rejected at load.
 
+## Hosted / TrainJob
+
+`ghcr.io/hanzoai/gym` (built from `Dockerfile.cuda` by
+`.hanzo/workflows/image.yml`, tagged by git tag) is the trainer container of
+the Kubeflow TrainJob that `POST /v1/ai/finetune/jobs` submits. Its command
+is `gym trainjob`, which reads the run from the environment the broker
+(hanzoai/ai `cluster/finetune.go`) sets, with the broker's defaults when a
+variable is unset:
+
+| Variable | Config key | Default |
+|---|---|---|
+| `BASE_MODEL` | `base_model`, when `MODEL_DIR` is not a directory | — |
+| `MODEL_DIR` | `base_model`, the initializer's copy of the model | `/workspace/model` |
+| `DATASET_DIR` | one dataset per `.jsonl` / `.json` / `.parquet` file under it | `/workspace/dataset` |
+| `OUTPUT_DIR` | `output_dir` | `/workspace/output` |
+| `TASK` | `chat` → `chat_template`, `instruct` → `alpaca`, `completion` → `completion` | — |
+| `METHOD` | `lora` → `adapter: lora`, `lora_target_linear: true` | `qlora` |
+| `EPOCHS` | `num_epochs` (whole number) | 3 |
+| `LEARNING_RATE` | `learning_rate` | 2e-4 |
+| `BATCH_SIZE` | `micro_batch_size` | 2 |
+| `GRAD_ACCUM` | `gradient_accumulation_steps` | 8 |
+| `MAX_SEQ_LEN` | `sequence_len` | 2048 |
+| `LORA_RANK`, `LORA_ALPHA`, `LORA_DROPOUT` | `lora_r`, `lora_alpha`, `lora_dropout` | 16, 32, 0.05 |
+| `WARMUP_RATIO`, `WEIGHT_DECAY` | `warmup_ratio`, `weight_decay` | 0.03, 0.01 |
+| `QUANT_4BIT`, `GRADIENT_CHECKPOINTING` | rejected when `true` | false |
+| `HF_TOKEN` | read by hf-hub for gated repos; never logged | — |
+
+`METHOD=lora` is what this image serves today (the `hanzo-ft-lora` runtime).
+`qlora` and `full`, `QUANT_4BIT=true` and `GRADIENT_CHECKPOINTING=true` fail
+at startup with a message naming the runtime or limit, so the TrainJob goes
+`Failed` instead of training something other than what was asked. Precision
+is `bf16: auto`. The resolved config is logged as YAML before training.
+
 Apache-2.0.
