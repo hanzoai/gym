@@ -16,7 +16,11 @@ jobs:
       - run: cargo clippy --all-targets -- -D warnings
       - run: cargo test --all-targets
   metal:
-    runs-on: hanzo-build-macos-arm64
+    # hanzo-build-darwin-arm64: the label RUNNERS.md registers for the
+    # Apple pool. hanzo-build-macos-arm64 is not one it lists, and a job
+    # asking for a label no runner advertises queues forever rather than
+    # failing — so the repo keeps looking like it has CI on this leg.
+    runs-on: hanzo-build-darwin-arm64
     timeout-minutes: 60
     steps:
       - uses: actions/checkout@v6
