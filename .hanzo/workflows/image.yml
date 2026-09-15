@@ -6,7 +6,7 @@
 # hanzo-ft-lora), never a CI side effect, and no floating tag is pushed.
 #
 # Same shape as hanzoai/kv and hanzoai/engine deploy.yml: the in-cluster
-# git-runners advertise hanzo-build-linux-amd64, and GHCR_USER / GHCR_TOKEN are
+# git-runners advertise linux-amd64, and GHCR_USER / GHCR_TOKEN are
 # hanzoai org secrets on git.hanzo.ai.
 name: image
 on:
@@ -21,7 +21,7 @@ concurrency:
 
 jobs:
   build:
-    runs-on: [hanzo-build-linux-amd64]
+    runs-on: [linux-amd64]
     timeout-minutes: 120
     steps:
       - uses: actions/checkout@v4
