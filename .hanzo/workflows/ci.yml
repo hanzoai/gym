@@ -20,7 +20,7 @@ jobs:
     # Apple pool. macos-arm64 is not one it lists, and a job
     # asking for a label no runner advertises queues forever rather than
     # failing — so the repo keeps looking like it has CI on this leg.
-    runs-on: macos-arm64
+    runs-on: darwin-arm64
     timeout-minutes: 60
     steps:
       - uses: actions/checkout@v6
