@@ -1,5 +1,7 @@
 # Hanzo Gym
 
+[![Open in Hanzo](https://hanzo.app/badges/open-in-hanzo.svg)](https://hanzo.app/dev/open?repo=github.com/hanzoai/gym&ref=main&action=open) [![Edit with Hanzo](https://hanzo.app/badges/edit-with-hanzo.svg)](https://hanzo.app/dev/open?repo=github.com/hanzoai/gym&ref=main&action=edit)
+
 LoRA fine-tuning and GRPO for language models, in Rust on
 [hanzo-ml](https://github.com/hanzoai/ml). One binary for CUDA, Metal and CPU.
 Configs use Axolotl's keys, so a config from `zooai/gym` runs here unchanged
